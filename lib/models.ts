@@ -1,4 +1,4 @@
-export type ProviderName = "openrouter" | "ollama" | "llamacpp";
+export type ProviderName = "openrouter" | "ollama" | "llamacpp" | "mlx";
 
 export type ModelConfig = {
   id: string;
@@ -21,7 +21,7 @@ export type PublicModelConfigGroups = {
   all: PublicModelConfig[];
 };
 
-const PROVIDERS = new Set<ProviderName>(["openrouter", "ollama", "llamacpp"]);
+const PROVIDERS = new Set<ProviderName>(["openrouter", "ollama", "llamacpp", "mlx"]);
 
 function normalizeHostBaseUrl(host: string, envName: string): string {
   const trimmed = host.trim().replace(/\/+$/, "");
@@ -64,6 +64,8 @@ function providerLabel(provider: ProviderName): string {
       return "Ollama";
     case "llamacpp":
       return "llama.cpp";
+    case "mlx":
+      return "mlx_lm";
   }
 }
 
@@ -89,6 +91,15 @@ function buildProviderBaseUrl(provider: ProviderName, envName: string): string {
 
       return normalizeHostBaseUrl(host, "LLAMACPP_HOST");
     }
+    case "mlx": {
+      const host = process.env.MLX_HOST?.trim();
+
+      if (!host) {
+        throw new Error(`MLX_HOST is required when ${envName} includes an mlx model.`);
+      }
+
+      return normalizeHostBaseUrl(host, "MLX_HOST");
+    }
   }
 }
 
@@ -111,7 +122,7 @@ function parseProvider(rawProvider: string, index: number, envName: string): Pro
 
   if (!PROVIDERS.has(normalized as ProviderName)) {
     throw new Error(
-      `${envName} entry ${index + 1} has unsupported provider "${rawProvider}". Use openrouter, ollama, or llamacpp.`
+      `${envName} entry ${index + 1} has unsupported provider "${rawProvider}". Use openrouter, ollama, llamacpp, or mlx.`
     );
   }
 
