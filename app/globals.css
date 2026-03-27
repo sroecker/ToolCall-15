@@ -80,6 +80,45 @@ code {
   border-radius: var(--radius-xl);
 }
 
+.config-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.config-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.config-label {
+  font-size: 0.8rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.config-input {
+  width: 100%;
+  min-height: 48px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+
+.config-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(190, 74, 47, 0.12);
+}
+
 .eyebrow {
   margin: 0 0 10px;
   text-transform: uppercase;
@@ -90,7 +129,7 @@ code {
 
 .hero-panel h1 {
   margin: 0;
-  font-size: clamp(2rem, 5vw, 4rem);
+  font-size: clamp(1.6rem, 4.2vw, 3.5rem);
   line-height: 0.95;
 }
 
@@ -112,9 +151,9 @@ code {
 
 .hero-actions {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   justify-content: flex-start;
-  align-items: flex-start;
+  align-items: center;
   gap: 14px;
   flex-shrink: 0;
 }
@@ -132,6 +171,19 @@ code {
   background: linear-gradient(135deg, var(--accent) 0%, #dc7340 100%);
   color: white;
   font-weight: 700;
+}
+
+.icon-button {
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.icon-button svg {
+  stroke-width: 2.1;
 }
 
 .ghost-button {
@@ -487,6 +539,18 @@ code {
   background: var(--panel-strong);
 }
 
+.config-dialog {
+  width: min(720px, 100%);
+}
+
+.dialog-config-grid {
+  margin-top: 18px;
+}
+
+.config-dialog .dialog-header {
+  align-items: flex-start;
+}
+
 .trace-dialog {
   width: min(980px, 100%);
 }
@@ -502,6 +566,7 @@ code {
 .dialog-header h2 {
   margin: 0;
 }
+
 
 .dialog-summary {
   margin-top: 18px;
@@ -569,5 +634,9 @@ code {
 
   .scenario-focus-header {
     flex-direction: column;
+  }
+
+  .config-grid {
+    grid-template-columns: 1fr;
   }
 }

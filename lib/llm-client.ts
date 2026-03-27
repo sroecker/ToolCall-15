@@ -22,7 +22,15 @@ export type AssistantResponse = {
   toolCalls: ProviderToolCall[];
 };
 
+export type GenerationParams = {
+  temperature?: number;
+  top_p?: number;
+  top_k?: number;
+  min_p?: number;
+};
+
 const MODEL_REQUEST_TIMEOUT_MS = 30_000;
+const MLX_REQUEST_TIMEOUT_MS = 180_000;
 
 type ChatResponse = {
   choices?: Array<{
@@ -89,7 +97,7 @@ function isTimeoutError(error: unknown): boolean {
   return error.name === "TimeoutError" || error.name === "AbortError";
 }
 
-export async function callModel(model: ModelConfig, messages: ModelMessage[]): Promise<AssistantResponse> {
+export async function callModel(model: ModelConfig, messages: ModelMessage[], params?: GenerationParams): Promise<AssistantResponse> {
   const baseUrl = normalizeBaseUrl(model.baseUrl);
   const headers: Record<string, string> = {
     "Content-Type": "application/json"
@@ -99,25 +107,39 @@ export async function callModel(model: ModelConfig, messages: ModelMessage[]): P
     headers.Authorization = `Bearer ${model.apiKey}`;
   }
 
+  const body: Record<string, unknown> = {
+    model: model.model,
+    temperature: params?.temperature ?? 0,
+    parallel_tool_calls: true,
+    tool_choice: "auto",
+    messages,
+    tools: UNIVERSAL_TOOLS
+  };
+
+  if (params?.top_p !== undefined) {
+    body.top_p = params.top_p;
+  }
+
+  if (params?.top_k !== undefined) {
+    body.top_k = params.top_k;
+  }
+
+  if (params?.min_p !== undefined) {
+    body.min_p = params.min_p;
+  }
+
   let response: Response;
 
   try {
     response = await fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers,
-      body: JSON.stringify({
-        model: model.model,
-        temperature: 0,
-        parallel_tool_calls: true,
-        tool_choice: "auto",
-        messages,
-        tools: UNIVERSAL_TOOLS
-      }),
-      signal: AbortSignal.timeout(MODEL_REQUEST_TIMEOUT_MS)
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(model.provider === "mlx" || model.provider === "lmstudio" ? MLX_REQUEST_TIMEOUT_MS : MODEL_REQUEST_TIMEOUT_MS)
     });
   } catch (error) {
     if (isTimeoutError(error)) {
-      throw new Error(`Request timed out after ${MODEL_REQUEST_TIMEOUT_MS / 1000}s.`);
+      throw new Error(`Request timed out after ${(model.provider === "mlx" || model.provider === "lmstudio" ? MLX_REQUEST_TIMEOUT_MS : MODEL_REQUEST_TIMEOUT_MS) / 1000}s.`);
     }
 
     throw error;
@@ -143,11 +165,7 @@ export async function callModel(model: ModelConfig, messages: ModelMessage[]): P
 
 export function createInitialMessages(userMessage: string): ModelMessage[] {
   return [
-    { role: "system", content: SYSTEM_PROMPT },
-    {
-      role: "system",
-      content: "Benchmark context: today is 2026-03-20 (Friday). Use this date for any relative time request."
-    },
+    { role: "system", content: `${SYSTEM_PROMPT}\n\nBenchmark context: today is 2026-03-20 (Friday). Use this date for any relative time request.` },
     { role: "user", content: userMessage }
   ];
 }
