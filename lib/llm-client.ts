@@ -90,14 +90,145 @@ function normalizeToolCalls(message: ProviderMessage): ProviderToolCall[] {
   );
 }
 
+// --- LFM helpers ---
+
+function toPythonValue(val: unknown): string {
+  if (typeof val === "string") return `"${val.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  if (typeof val === "boolean") return val ? "True" : "False";
+  if (val === null || val === undefined) return "None";
+  if (typeof val === "number") return String(val);
+  return JSON.stringify(val);
+}
+
+function serializeToolCallsToLfm(toolCalls: ProviderToolCall[]): string {
+  const callsStr = toolCalls.map((tc) => {
+    let args: Record<string, unknown> = {};
+    try {
+      const parsed = JSON.parse(tc.function.arguments || "{}");
+      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+        args = parsed as Record<string, unknown>;
+      }
+    } catch { /* ignore */ }
+    const argsStr = Object.entries(args).map(([k, v]) => `${k}=${toPythonValue(v)}`).join(", ");
+    return `${tc.function.name}(${argsStr})`;
+  }).join(", ");
+  return `<|tool_call_start|>[${callsStr}]<|tool_call_end|>`;
+}
+
 function buildLfmMessages(messages: ModelMessage[]): ModelMessage[] {
   const toolList = UNIVERSAL_TOOLS.map((t) => t.function);
-  const injection =
-    `\n\nAvailable tools: ${JSON.stringify(toolList)}\n` +
-    `When calling a tool output it between <|tool_call_start|> and <|tool_call_end|> tokens as a JSON array:\n` +
-    `<|tool_call_start|>[{"name": "tool_name", "arguments": {"param": "value"}}]<|tool_call_end|>`;
-  return messages.map((msg) => (msg.role === "system" ? { ...msg, content: msg.content + injection } : msg));
+  const injection = `\n\nList of tools: ${JSON.stringify(toolList)}\n`;
+
+  return messages.map((msg): ModelMessage => {
+    if (msg.role === "system") {
+      return { ...msg, content: msg.content + injection };
+    }
+
+    // Re-serialize assistant tool calls back into LFM format for multi-turn history.
+    // The LFM model is not trained on the OpenAI structured tool_calls field.
+    if (msg.role === "assistant" && msg.tool_calls && msg.tool_calls.length > 0) {
+      const lfmBlock = serializeToolCallsToLfm(msg.tool_calls);
+      return {
+        role: "assistant",
+        content: msg.content ? `${msg.content}\n${lfmBlock}` : lfmBlock
+      };
+    }
+
+    return msg;
+  });
 }
+
+// --- Pythonic call parser ---
+
+function splitOnCommaRespectingQuotes(s: string): string[] {
+  const parts: string[] = [];
+  let current = "";
+  let inString = false;
+  let stringChar = "";
+
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (inString) {
+      if (ch === "\\" && i + 1 < s.length) { current += ch + s[i + 1]; i++; }
+      else if (ch === stringChar) { inString = false; current += ch; }
+      else { current += ch; }
+    } else if (ch === '"' || ch === "'") {
+      inString = true; stringChar = ch; current += ch;
+    } else if (ch === ",") {
+      parts.push(current.trim()); current = "";
+    } else {
+      current += ch;
+    }
+  }
+  if (current.trim()) parts.push(current.trim());
+  return parts;
+}
+
+function parsePythonValue(raw: string): unknown {
+  const t = raw.trim();
+  if ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'"))) {
+    return t.slice(1, -1).replace(/\\n/g, "\n").replace(/\\t/g, "\t").replace(/\\"/g, '"').replace(/\\'/g, "'").replace(/\\\\/g, "\\");
+  }
+  if (t === "True") return true;
+  if (t === "False") return false;
+  if (t === "None") return null;
+  const num = Number(t);
+  if (!isNaN(num) && t !== "") return num;
+  return t;
+}
+
+function parsePythonicCalls(text: string): Array<{ name: string; args: Record<string, unknown> }> {
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  let i = 0;
+
+  while (i < text.length) {
+    while (i < text.length && /[\s,]/.test(text[i])) i++;
+    if (i >= text.length) break;
+
+    const nameStart = i;
+    while (i < text.length && /\w/.test(text[i])) i++;
+    const name = text.slice(nameStart, i);
+    if (!name) { i++; continue; }
+
+    while (i < text.length && text[i] === " ") i++;
+    if (i >= text.length || text[i] !== "(") continue;
+    i++;
+
+    const argsStart = i;
+    let depth = 1;
+    let inString = false;
+    let stringChar = "";
+    while (i < text.length && depth > 0) {
+      const ch = text[i];
+      if (inString) {
+        if (ch === "\\" && i + 1 < text.length) { i += 2; continue; }
+        if (ch === stringChar) inString = false;
+      } else if (ch === '"' || ch === "'") {
+        inString = true; stringChar = ch;
+      } else if (ch === "(") {
+        depth++;
+      } else if (ch === ")") {
+        depth--;
+        if (depth === 0) break;
+      }
+      i++;
+    }
+    const argsStr = text.slice(argsStart, i);
+    i++;
+
+    const args: Record<string, unknown> = {};
+    for (const part of splitOnCommaRespectingQuotes(argsStr)) {
+      const eq = part.indexOf("=");
+      if (eq === -1) continue;
+      const key = part.slice(0, eq).trim();
+      if (key) args[key] = parsePythonValue(part.slice(eq + 1).trim());
+    }
+    calls.push({ name, args });
+  }
+  return calls;
+}
+
+// ---
 
 function parseLfmResponse(content: string): { content: string; toolCalls: ProviderToolCall[] } {
   const toolCalls: ProviderToolCall[] = [];
@@ -125,10 +256,48 @@ function parseLfmResponse(content: string): { content: string; toolCalls: Provid
     }
   }
 
-  return {
-    content: content.replace(/<\|tool_call_start\|>[\s\S]*?<\|tool_call_end\|>/g, "").trim(),
-    toolCalls
-  };
+  if (toolCalls.length > 0) {
+    return {
+      content: content.replace(/<\|tool_call_start\|>[\s\S]*?<\|tool_call_end\|>/g, "").trim(),
+      toolCalls
+    };
+  }
+
+  // Fallback: server stripped the special tokens, leaving bare content.
+  // Try JSON first, then pythonic format.
+  const trimmed = content.trim();
+  if (trimmed.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(trimmed) as Array<{ name?: string; arguments?: unknown }>;
+      for (const call of Array.isArray(parsed) ? parsed : []) {
+        if (call?.name) {
+          toolCalls.push({
+            id: `tool_call_${++callIndex}`,
+            type: "function",
+            function: {
+              name: call.name,
+              arguments: typeof call.arguments === "string" ? call.arguments : JSON.stringify(call.arguments ?? {})
+            }
+          });
+        }
+      }
+      if (toolCalls.length > 0) return { content: "", toolCalls };
+    } catch {
+      // not JSON — fall through to pythonic
+    }
+
+    const inner = trimmed.slice(1, -1).trim();
+    for (const call of parsePythonicCalls(inner)) {
+      toolCalls.push({
+        id: `tool_call_${++callIndex}`,
+        type: "function",
+        function: { name: call.name, arguments: JSON.stringify(call.args) }
+      });
+    }
+    if (toolCalls.length > 0) return { content: "", toolCalls };
+  }
+
+  return { content, toolCalls };
 }
 
 function isTimeoutError(error: unknown): boolean {
@@ -221,6 +390,11 @@ export async function callModel(model: ModelConfig, messages: ModelMessage[], pa
 
   if (useLfmFormat) {
     const parsed = parseLfmResponse(normalizeContent(message.content));
+    // The inference server intercepts <|tool_call_start|> special tokens and moves them
+    // to message.tool_calls before we ever see them in content — check there as fallback.
+    if (parsed.toolCalls.length === 0 && (message.tool_calls?.length ?? 0) > 0) {
+      return { content: parsed.content, toolCalls: normalizeToolCalls(message) };
+    }
     return { content: parsed.content, toolCalls: parsed.toolCalls };
   }
 
