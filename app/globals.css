@@ -137,6 +137,20 @@ code {
   line-height: 0.95;
 }
 
+.editable-title {
+  outline: none;
+  border-radius: 6px;
+  transition: background 0.15s;
+}
+
+.editable-title:hover {
+  background: rgba(26, 22, 16, 0.05);
+}
+
+.editable-title:focus {
+  background: rgba(26, 22, 16, 0.07);
+}
+
 .params-summary {
   display: flex;
   flex-wrap: wrap;

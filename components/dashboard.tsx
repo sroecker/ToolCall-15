@@ -709,7 +709,7 @@ export function Dashboard({ primaryModels, secondaryModels, scenarios, configErr
     <>
       <section className="hero-panel">
         <div>
-          <h1>ToolCall-15 LLM Tool Use Benchmark</h1>
+          <h1 contentEditable suppressContentEditableWarning className="editable-title">ToolCall-15 LLM Tool Use Benchmark</h1>
           <p className="params-summary">
             <span>temp: {genParams.temperature}</span>
             <span>top_p: {genParams.top_p ?? "—"}</span>
