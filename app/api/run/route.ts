@@ -32,6 +32,14 @@ export async function GET(request: Request) {
   if (minP !== null) {
     params.min_p = parseFloat(minP);
   }
+  const repetitionPenalty = searchParams.get("repetition_penalty");
+  if (repetitionPenalty !== null) {
+    params.repetition_penalty = parseFloat(repetitionPenalty);
+  }
+  const toolsFormat = searchParams.get("tools_format");
+  if (toolsFormat === "lfm") {
+    params.tools_format = "lfm";
+  }
 
   let models = [] as ReturnType<typeof getModelConfigs>;
   let configError: string | null = null;

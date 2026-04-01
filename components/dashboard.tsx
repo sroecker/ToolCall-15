@@ -42,6 +42,8 @@ type GenerationConfig = {
   top_p: number | undefined;
   top_k: number | undefined;
   min_p: number | undefined;
+  repetition_penalty: number | undefined;
+  tools_format: "default" | "lfm";
 };
 
 const QWEN_VARIANT_ORDER = ["0.8b", "2b", "4b", "9b", "27b", "35b", "122b", "397b"];
@@ -50,7 +52,9 @@ const DEFAULT_GENERATION_CONFIG: GenerationConfig = {
   temperature: 0,
   top_p: undefined,
   top_k: undefined,
-  min_p: undefined
+  min_p: undefined,
+  repetition_penalty: undefined,
+  tools_format: "default"
 };
 
 function buildInitialCells(models: PublicModelConfig[], scenarios: ScenarioCard[]): Record<string, Record<string, CellState>> {
@@ -165,7 +169,9 @@ function parseStoredGenerationConfig(raw: string | null): GenerationConfig | nul
       temperature: typeof parsed.temperature === "number" && Number.isFinite(parsed.temperature) ? parsed.temperature : 0,
       top_p: typeof parsed.top_p === "number" && Number.isFinite(parsed.top_p) ? parsed.top_p : undefined,
       top_k: typeof parsed.top_k === "number" && Number.isFinite(parsed.top_k) ? parsed.top_k : undefined,
-      min_p: typeof parsed.min_p === "number" && Number.isFinite(parsed.min_p) ? parsed.min_p : undefined
+      min_p: typeof parsed.min_p === "number" && Number.isFinite(parsed.min_p) ? parsed.min_p : undefined,
+      repetition_penalty: typeof parsed.repetition_penalty === "number" && Number.isFinite(parsed.repetition_penalty) ? parsed.repetition_penalty : undefined,
+      tools_format: parsed.tools_format === "lfm" ? "lfm" : "default"
     };
   } catch {
     return null;
@@ -219,8 +225,8 @@ function ConfigDialog({
   }
 
   return (
-    <div className="dialog-backdrop" role="presentation">
-      <div className="dialog-shell config-dialog" role="dialog" aria-modal="true" aria-labelledby="config-title">
+    <div className="dialog-backdrop" role="presentation" onClick={onClose}>
+      <div className="dialog-shell config-dialog" role="dialog" aria-modal="true" aria-labelledby="config-title" onClick={(e) => e.stopPropagation()}>
         <div className="dialog-header">
           <div>
             <p className="eyebrow">Benchmark Config</p>
@@ -295,6 +301,34 @@ function ConfigDialog({
                 })
               }
             />
+          </label>
+          <label className="config-field">
+            <span className="config-label">Repetition Penalty</span>
+            <input
+              className="config-input"
+              type="number"
+              step="0.05"
+              min="0"
+              placeholder="default"
+              value={genParams.repetition_penalty ?? ""}
+              onChange={(e) =>
+                setGenParams((prev) => {
+                  const value = e.target.value === "" ? undefined : parseFloat(e.target.value);
+                  return { ...prev, repetition_penalty: value };
+                })
+              }
+            />
+          </label>
+          <label className="config-field config-field-wide">
+            <span className="config-label">Tools Format</span>
+            <select
+              className="config-input"
+              value={genParams.tools_format}
+              onChange={(e) => setGenParams((prev) => ({ ...prev, tools_format: e.target.value as "default" | "lfm" }))}
+            >
+              <option value="default">default — OpenAI tools parameter</option>
+              <option value="lfm">lfm — system prompt injection + &lt;|tool_call_start|&gt;</option>
+            </select>
           </label>
         </div>
       </div>
@@ -543,6 +577,14 @@ export function Dashboard({ primaryModels, secondaryModels, scenarios, configErr
       params.set("min_p", String(genParams.min_p));
     }
 
+    if (genParams.repetition_penalty !== undefined) {
+      params.set("repetition_penalty", String(genParams.repetition_penalty));
+    }
+
+    if (genParams.tools_format !== "default") {
+      params.set("tools_format", genParams.tools_format);
+    }
+
     const source = new EventSource(`/api/run?${params.toString()}`);
     eventSourceRef.current = source;
 
@@ -668,6 +710,14 @@ export function Dashboard({ primaryModels, secondaryModels, scenarios, configErr
       <section className="hero-panel">
         <div>
           <h1>ToolCall-15 LLM Tool Use Benchmark</h1>
+          <p className="params-summary">
+            <span>temp: {genParams.temperature}</span>
+            <span>top_p: {genParams.top_p ?? "—"}</span>
+            <span>top_k: {genParams.top_k ?? "—"}</span>
+            <span>min_p: {genParams.min_p ?? "—"}</span>
+            <span>rep_penalty: {genParams.repetition_penalty ?? "—"}</span>
+            <span>tools: {genParams.tools_format}</span>
+          </p>
           {configError ? <p className="config-error">{configError}</p> : null}
         </div>
         <div className="hero-actions">

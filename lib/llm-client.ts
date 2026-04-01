@@ -27,6 +27,8 @@ export type GenerationParams = {
   top_p?: number;
   top_k?: number;
   min_p?: number;
+  repetition_penalty?: number;
+  tools_format?: "default" | "lfm";
 };
 
 const DEFAULT_MODEL_REQUEST_TIMEOUT_SECONDS = 30;
@@ -88,6 +90,47 @@ function normalizeToolCalls(message: ProviderMessage): ProviderToolCall[] {
   );
 }
 
+function buildLfmMessages(messages: ModelMessage[]): ModelMessage[] {
+  const toolList = UNIVERSAL_TOOLS.map((t) => t.function);
+  const injection =
+    `\n\nAvailable tools: ${JSON.stringify(toolList)}\n` +
+    `When calling a tool output it between <|tool_call_start|> and <|tool_call_end|> tokens as a JSON array:\n` +
+    `<|tool_call_start|>[{"name": "tool_name", "arguments": {"param": "value"}}]<|tool_call_end|>`;
+  return messages.map((msg) => (msg.role === "system" ? { ...msg, content: msg.content + injection } : msg));
+}
+
+function parseLfmResponse(content: string): { content: string; toolCalls: ProviderToolCall[] } {
+  const toolCalls: ProviderToolCall[] = [];
+  let callIndex = 0;
+  const blocks = content.match(/<\|tool_call_start\|>([\s\S]*?)<\|tool_call_end\|>/g) ?? [];
+
+  for (const block of blocks) {
+    const inner = block.replace(/<\|tool_call_start\|>/, "").replace(/<\|tool_call_end\|>/, "").trim();
+    try {
+      const parsed = JSON.parse(inner) as Array<{ name?: string; arguments?: unknown }>;
+      for (const call of Array.isArray(parsed) ? parsed : [parsed]) {
+        if (call?.name) {
+          toolCalls.push({
+            id: `tool_call_${++callIndex}`,
+            type: "function",
+            function: {
+              name: call.name,
+              arguments: typeof call.arguments === "string" ? call.arguments : JSON.stringify(call.arguments ?? {})
+            }
+          });
+        }
+      }
+    } catch {
+      // ignore malformed blocks
+    }
+  }
+
+  return {
+    content: content.replace(/<\|tool_call_start\|>[\s\S]*?<\|tool_call_end\|>/g, "").trim(),
+    toolCalls
+  };
+}
+
 function isTimeoutError(error: unknown): boolean {
   if (!(error instanceof Error)) {
     return false;
@@ -123,13 +166,12 @@ export async function callModel(model: ModelConfig, messages: ModelMessage[], pa
     headers.Authorization = `Bearer ${model.apiKey}`;
   }
 
+  const useLfmFormat = (params?.tools_format ?? "default") === "lfm";
   const body: Record<string, unknown> = {
     model: model.model,
     temperature: params?.temperature ?? 0,
-    parallel_tool_calls: true,
-    tool_choice: "auto",
-    messages,
-    tools: UNIVERSAL_TOOLS
+    messages: useLfmFormat ? buildLfmMessages(messages) : messages,
+    ...(useLfmFormat ? {} : { parallel_tool_calls: true, tool_choice: "auto", tools: UNIVERSAL_TOOLS })
   };
 
   if (params?.top_p !== undefined) {
@@ -142,6 +184,10 @@ export async function callModel(model: ModelConfig, messages: ModelMessage[], pa
 
   if (params?.min_p !== undefined) {
     body.min_p = params.min_p;
+  }
+
+  if (params?.repetition_penalty !== undefined) {
+    body.repetition_penalty = params.repetition_penalty;
   }
 
   let response: Response;
@@ -171,6 +217,11 @@ export async function callModel(model: ModelConfig, messages: ModelMessage[], pa
 
   if (!message) {
     throw new Error("Provider returned no assistant message.");
+  }
+
+  if (useLfmFormat) {
+    const parsed = parseLfmResponse(normalizeContent(message.content));
+    return { content: parsed.content, toolCalls: parsed.toolCalls };
   }
 
   return {
