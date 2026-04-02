@@ -119,6 +119,10 @@ function answerContainsNumber(answer: string, value: string): boolean {
   return collapsed.includes(value.replaceAll(",", "").toLowerCase());
 }
 
+function fullAssistantTranscript(state: ScenarioState): string {
+  return state.assistantMessages.join("\n");
+}
+
 function toolCallsByName(state: ScenarioState, name: string): ToolCallRecord[] {
   return state.toolCalls.filter((call) => call.name === name);
 }
@@ -900,11 +904,16 @@ export const SCENARIOS: ScenarioDefinition[] = [
     evaluate(state) {
       const stockCalls = toolCallsByName(state, "get_stock_price");
       const usedSearch = hasToolCall(state, "web_search");
+      const assistantTranscript = fullAssistantTranscript(state);
       const acknowledgedError =
-        /temporarily unavailable|rate limit|service/i.test(state.finalAnswer) ||
-        /couldn't|get_stock_price/i.test(state.finalAnswer);
+        /temporarily unavailable|rate limit|service/i.test(assistantTranscript) ||
+        /couldn't|get_stock_price/i.test(assistantTranscript);
+      const offeredAlternative =
+        /web search|search(?:ing)?(?: for)?(?: the)? information online|search online|try again|fallback|check .*?(?:website|platform|source)/i.test(
+          assistantTranscript
+        );
 
-      if (stockCalls.length >= 1 && acknowledgedError && (!usedSearch || /web search|try again|fallback/i.test(state.finalAnswer))) {
+      if (stockCalls.length >= 1 && acknowledgedError && (usedSearch || offeredAlternative)) {
         return { status: "pass", points: 2, summary: "Acknowledged the stock tool failure and handled it gracefully." };
       }
 
