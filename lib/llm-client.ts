@@ -6,7 +6,6 @@ export type ModelMessage = {
   content: string;
   tool_calls?: ProviderToolCall[];
   tool_call_id?: string;
-  reasoning?: string;
 };
 
 export type ProviderToolCall = {
