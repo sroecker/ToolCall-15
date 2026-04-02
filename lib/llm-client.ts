@@ -6,6 +6,7 @@ export type ModelMessage = {
   content: string;
   tool_calls?: ProviderToolCall[];
   tool_call_id?: string;
+  reasoning?: string;
 };
 
 export type ProviderToolCall = {
@@ -20,6 +21,7 @@ export type ProviderToolCall = {
 export type AssistantResponse = {
   content: string;
   toolCalls: ProviderToolCall[];
+  reasoning?: string;
 };
 
 export type GenerationParams = {
@@ -35,6 +37,8 @@ type ChatResponse = {
   choices?: Array<{
     message?: {
       content?: string | Array<{ type?: string; text?: string }>;
+      reasoning_content?: string;
+      reasoning?: string;
       tool_calls?: Array<{
         id?: string;
         type?: string;
@@ -175,7 +179,8 @@ export async function callModel(model: ModelConfig, messages: ModelMessage[], pa
 
   return {
     content: normalizeContent(message.content),
-    toolCalls: normalizeToolCalls(message)
+    toolCalls: normalizeToolCalls(message),
+    reasoning: message.reasoning_content ?? message.reasoning
   };
 }
 

@@ -86,11 +86,12 @@ function stringifyToolResult(result: unknown): string {
   return JSON.stringify(result);
 }
 
-function toAssistantMessage(response: { content: string; toolCalls: ProviderToolCall[] }): ModelMessage {
+function toAssistantMessage(response: { content: string; toolCalls: ProviderToolCall[]; reasoning?: string }): ModelMessage {
   return {
     role: "assistant",
     content: response.content,
-    tool_calls: response.toolCalls
+    tool_calls: response.toolCalls,
+    reasoning: response.reasoning
   };
 }
 
@@ -174,6 +175,9 @@ async function runScenarioForModel(
       state.assistantMessages.push(response.content);
       messages.push(toAssistantMessage(response));
       traceLines.push(`assistant_turn_${turn}=${response.content || "[tool_calls_only]"}`);
+      if (response.reasoning) {
+        traceLines.push(`assistant_reasoning_${turn}=${response.reasoning}`);
+      }
 
       if (response.toolCalls.length === 0) {
         state.finalAnswer = response.content;
