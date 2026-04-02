@@ -137,17 +137,28 @@ code {
   line-height: 0.95;
 }
 
-.editable-title {
+.hero-title {
+  margin: 0;
+}
+
+.hero-title-input {
+  width: 100%;
+  padding: 0;
+  border: none;
   outline: none;
   border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
   transition: background 0.15s;
 }
 
-.editable-title:hover {
+.hero-title-input:hover {
   background: rgba(26, 22, 16, 0.05);
 }
 
-.editable-title:focus {
+.hero-title-input:focus {
   background: rgba(26, 22, 16, 0.07);
 }
 

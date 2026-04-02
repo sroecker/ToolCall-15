@@ -144,34 +144,160 @@ function buildLfmMessages(messages: ModelMessage[]): ModelMessage[] {
 
 // --- Pythonic call parser ---
 
-function splitOnCommaRespectingQuotes(s: string): string[] {
+function splitTopLevel(input: string, delimiter: string): string[] {
   const parts: string[] = [];
   let current = "";
   let inString = false;
   let stringChar = "";
+  let parenDepth = 0;
+  let bracketDepth = 0;
+  let braceDepth = 0;
 
-  for (let i = 0; i < s.length; i++) {
-    const ch = s[i];
+  for (let index = 0; index < input.length; index += 1) {
+    const ch = input[index];
+
     if (inString) {
-      if (ch === "\\" && i + 1 < s.length) { current += ch + s[i + 1]; i++; }
-      else if (ch === stringChar) { inString = false; current += ch; }
-      else { current += ch; }
-    } else if (ch === '"' || ch === "'") {
+      if (ch === "\\" && index + 1 < input.length) {
+        current += ch + input[index + 1];
+        index += 1;
+      } else if (ch === stringChar) {
+        inString = false;
+        current += ch;
+      } else {
+        current += ch;
+      }
+      continue;
+    }
+
+    if (ch === '"' || ch === "'") {
       inString = true; stringChar = ch; current += ch;
-    } else if (ch === ",") {
-      parts.push(current.trim()); current = "";
-    } else {
-      current += ch;
+      continue;
+    }
+
+    if (ch === "(") {
+      parenDepth += 1;
+    } else if (ch === ")" && parenDepth > 0) {
+      parenDepth -= 1;
+    } else if (ch === "[") {
+      bracketDepth += 1;
+    } else if (ch === "]" && bracketDepth > 0) {
+      bracketDepth -= 1;
+    } else if (ch === "{") {
+      braceDepth += 1;
+    } else if (ch === "}" && braceDepth > 0) {
+      braceDepth -= 1;
+    } else if (ch === delimiter && parenDepth === 0 && bracketDepth === 0 && braceDepth === 0) {
+      const part = current.trim();
+      if (part) {
+        parts.push(part);
+      }
+      current = "";
+      continue;
+    }
+
+    current += ch;
+  }
+
+  if (current.trim()) {
+    parts.push(current.trim());
+  }
+
+  return parts;
+}
+
+function findTopLevelChar(input: string, target: string): number {
+  let inString = false;
+  let stringChar = "";
+  let parenDepth = 0;
+  let bracketDepth = 0;
+  let braceDepth = 0;
+
+  for (let index = 0; index < input.length; index += 1) {
+    const ch = input[index];
+
+    if (inString) {
+      if (ch === "\\" && index + 1 < input.length) {
+        index += 1;
+      } else if (ch === stringChar) {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"' || ch === "'") {
+      inString = true;
+      stringChar = ch;
+      continue;
+    }
+
+    if (ch === "(") {
+      parenDepth += 1;
+      continue;
+    }
+
+    if (ch === ")" && parenDepth > 0) {
+      parenDepth -= 1;
+      continue;
+    }
+
+    if (ch === "[") {
+      bracketDepth += 1;
+      continue;
+    }
+
+    if (ch === "]" && bracketDepth > 0) {
+      bracketDepth -= 1;
+      continue;
+    }
+
+    if (ch === "{") {
+      braceDepth += 1;
+      continue;
+    }
+
+    if (ch === "}" && braceDepth > 0) {
+      braceDepth -= 1;
+      continue;
+    }
+
+    if (ch === target && parenDepth === 0 && bracketDepth === 0 && braceDepth === 0) {
+      return index;
     }
   }
-  if (current.trim()) parts.push(current.trim());
-  return parts;
+
+  return -1;
 }
 
 function parsePythonValue(raw: string): unknown {
   const t = raw.trim();
   if ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'"))) {
     return t.slice(1, -1).replace(/\\n/g, "\n").replace(/\\t/g, "\t").replace(/\\"/g, '"').replace(/\\'/g, "'").replace(/\\\\/g, "\\");
+  }
+  if (t.startsWith("[") && t.endsWith("]")) {
+    const inner = t.slice(1, -1).trim();
+    return inner ? splitTopLevel(inner, ",").map((part) => parsePythonValue(part)) : [];
+  }
+  if (t.startsWith("{") && t.endsWith("}")) {
+    const inner = t.slice(1, -1).trim();
+    const objectValue: Record<string, unknown> = {};
+
+    if (!inner) {
+      return objectValue;
+    }
+
+    for (const entry of splitTopLevel(inner, ",")) {
+      const separatorIndex = findTopLevelChar(entry, ":");
+
+      if (separatorIndex === -1) {
+        continue;
+      }
+
+      const keyValue = parsePythonValue(entry.slice(0, separatorIndex).trim());
+      const objectKey = typeof keyValue === "string" ? keyValue : String(keyValue);
+      objectValue[objectKey] = parsePythonValue(entry.slice(separatorIndex + 1).trim());
+    }
+
+    return objectValue;
   }
   if (t === "True") return true;
   if (t === "False") return false;
@@ -221,8 +347,8 @@ function parsePythonicCalls(text: string): Array<{ name: string; args: Record<st
     i++;
 
     const args: Record<string, unknown> = {};
-    for (const part of splitOnCommaRespectingQuotes(argsStr)) {
-      const eq = part.indexOf("=");
+    for (const part of splitTopLevel(argsStr, ",")) {
+      const eq = findTopLevelChar(part, "=");
       if (eq === -1) continue;
       const key = part.slice(0, eq).trim();
       if (key) args[key] = parsePythonValue(part.slice(eq + 1).trim());

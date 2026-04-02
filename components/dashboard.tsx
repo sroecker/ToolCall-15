@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Play, SlidersHorizontal, X } from "lucide-react";
 
 import { scoreModelResults, type BenchmarkCategory, type ModelScenarioResult, type ModelScoreSummary } from "@/lib/benchmark";
@@ -48,6 +48,8 @@ type GenerationConfig = {
 
 const QWEN_VARIANT_ORDER = ["0.8b", "2b", "4b", "9b", "27b", "35b", "122b", "397b"];
 const BENCHMARK_CONFIG_STORAGE_KEY = "toolcall15.benchmark-config";
+const BENCHMARK_TITLE_STORAGE_KEY = "toolcall15.benchmark-title";
+const DEFAULT_BENCHMARK_TITLE = "ToolCall-15 LLM Tool Use Benchmark";
 const DEFAULT_GENERATION_CONFIG: GenerationConfig = {
   temperature: 0,
   top_p: undefined,
@@ -56,6 +58,7 @@ const DEFAULT_GENERATION_CONFIG: GenerationConfig = {
   repetition_penalty: undefined,
   tools_format: "default"
 };
+const preferenceStoreListeners = new Set<() => void>();
 
 function buildInitialCells(models: PublicModelConfig[], scenarios: ScenarioCard[]): Record<string, Record<string, CellState>> {
   return Object.fromEntries(
@@ -176,6 +179,74 @@ function parseStoredGenerationConfig(raw: string | null): GenerationConfig | nul
   } catch {
     return null;
   }
+}
+
+function parseStoredBenchmarkTitle(raw: string | null): string | null {
+  const trimmed = raw?.trim();
+  return trimmed ? trimmed : null;
+}
+
+function subscribeToPreferenceStore(listener: () => void): () => void {
+  preferenceStoreListeners.add(listener);
+
+  if (typeof window === "undefined") {
+    return () => {
+      preferenceStoreListeners.delete(listener);
+    };
+  }
+
+  const handleStorage = (event: StorageEvent) => {
+    if (event.key === BENCHMARK_CONFIG_STORAGE_KEY || event.key === BENCHMARK_TITLE_STORAGE_KEY) {
+      listener();
+    }
+  };
+
+  window.addEventListener("storage", handleStorage);
+
+  return () => {
+    preferenceStoreListeners.delete(listener);
+    window.removeEventListener("storage", handleStorage);
+  };
+}
+
+function emitPreferenceStoreChange(): void {
+  for (const listener of preferenceStoreListeners) {
+    listener();
+  }
+}
+
+function readStoredGenerationConfig(): GenerationConfig {
+  if (typeof window === "undefined") {
+    return DEFAULT_GENERATION_CONFIG;
+  }
+
+  return parseStoredGenerationConfig(window.localStorage.getItem(BENCHMARK_CONFIG_STORAGE_KEY)) ?? DEFAULT_GENERATION_CONFIG;
+}
+
+function readStoredBenchmarkTitle(): string {
+  if (typeof window === "undefined") {
+    return DEFAULT_BENCHMARK_TITLE;
+  }
+
+  return parseStoredBenchmarkTitle(window.localStorage.getItem(BENCHMARK_TITLE_STORAGE_KEY)) ?? DEFAULT_BENCHMARK_TITLE;
+}
+
+function persistGenerationConfig(nextConfig: GenerationConfig): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.setItem(BENCHMARK_CONFIG_STORAGE_KEY, JSON.stringify(nextConfig));
+  emitPreferenceStoreChange();
+}
+
+function persistBenchmarkTitle(nextTitle: string): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.setItem(BENCHMARK_TITLE_STORAGE_KEY, nextTitle);
+  emitPreferenceStoreChange();
 }
 
 function FailureDialog({ details, onClose }: { details: FailureDetails | null; onClose: () => void }) {
@@ -327,7 +398,7 @@ function ConfigDialog({
               onChange={(e) => setGenParams((prev) => ({ ...prev, tools_format: e.target.value as "default" | "lfm" }))}
             >
               <option value="default">default — OpenAI tools parameter</option>
-              <option value="lfm">lfm — system prompt injection + &lt;|tool_call_start|&gt;</option>
+              <option value="lfm">lfm — experimental prompt injection mode</option>
             </select>
           </label>
         </div>
@@ -347,9 +418,19 @@ export function Dashboard({ primaryModels, secondaryModels, scenarios, configErr
   const [logs, setLogs] = useState<Array<{ id: string; message: string }>>([]);
   const [failureDetails, setFailureDetails] = useState<FailureDetails | null>(null);
   const [configOpen, setConfigOpen] = useState(false);
-  const [genParams, setGenParams] = useState<GenerationConfig>(DEFAULT_GENERATION_CONFIG);
-  const storageReadyRef = useRef(false);
   const eventSourceRef = useRef<EventSource | null>(null);
+  const genParams = useSyncExternalStore(subscribeToPreferenceStore, readStoredGenerationConfig, () => DEFAULT_GENERATION_CONFIG);
+  const benchmarkTitle = useSyncExternalStore(subscribeToPreferenceStore, readStoredBenchmarkTitle, () => DEFAULT_BENCHMARK_TITLE);
+
+  const setGenParams: React.Dispatch<React.SetStateAction<GenerationConfig>> = (value) => {
+    const nextConfig = typeof value === "function" ? value(readStoredGenerationConfig()) : value;
+    persistGenerationConfig(nextConfig);
+  };
+
+  const setBenchmarkTitle: React.Dispatch<React.SetStateAction<string>> = (value) => {
+    const nextTitle = typeof value === "function" ? value(readStoredBenchmarkTitle()) : value;
+    persistBenchmarkTitle(nextTitle);
+  };
 
   const displayPrimaryModels = useMemo(
     () => [...primaryModels].sort((left, right) => variantOrderIndex(left.model) - variantOrderIndex(right.model)),
@@ -393,24 +474,6 @@ export function Dashboard({ primaryModels, secondaryModels, scenarios, configErr
       eventSourceRef.current?.close();
     };
   }, []);
-
-  useEffect(() => {
-    const storedConfig = parseStoredGenerationConfig(window.localStorage.getItem(BENCHMARK_CONFIG_STORAGE_KEY));
-
-    if (storedConfig) {
-      setGenParams(storedConfig);
-    }
-
-    storageReadyRef.current = true;
-  }, []);
-
-  useEffect(() => {
-    if (!storageReadyRef.current) {
-      return;
-    }
-
-    window.localStorage.setItem(BENCHMARK_CONFIG_STORAGE_KEY, JSON.stringify(genParams));
-  }, [genParams]);
 
   function appendLog(message: string) {
     setLogs((previous) => {
@@ -709,7 +772,17 @@ export function Dashboard({ primaryModels, secondaryModels, scenarios, configErr
     <>
       <section className="hero-panel">
         <div>
-          <h1 contentEditable suppressContentEditableWarning className="editable-title">ToolCall-15 LLM Tool Use Benchmark</h1>
+          <h1 className="hero-title">
+            <input
+              className="hero-title-input"
+              type="text"
+              value={benchmarkTitle}
+              onChange={(event) => setBenchmarkTitle(event.target.value)}
+              onBlur={() => setBenchmarkTitle((previous) => previous.trim() || DEFAULT_BENCHMARK_TITLE)}
+              aria-label="Benchmark title"
+              spellCheck={false}
+            />
+          </h1>
           <p className="params-summary">
             <span>temp: {genParams.temperature}</span>
             <span>top_p: {genParams.top_p ?? "—"}</span>
